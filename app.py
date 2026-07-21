@@ -19,8 +19,11 @@ load_dotenv()  # no-op si .env absent (ex: sur Streamlit Cloud, où les secrets
 from data_sources import (
     search_company_france,
     search_company_portugal,
+    search_companies_by_criteria,
     search_news,
     suggest_contact_leads,
+    NAF_SECTIONS,
+    REGIONS_FR,
 )
 from ai_strategy import generate_prospecting_strategy
 
@@ -57,33 +60,111 @@ with st.sidebar:
     )
 
 # --- Recherche entreprise ---------------------------------------------------
-col1, col2 = st.columns([3, 1])
-with col1:
-    company_name = st.text_input("Nom de l'entreprise à prospecter")
-with col2:
-    country = st.selectbox("Pays", ["France", "Portugal"])
+tab_nom, tab_criteres = st.tabs(["🔎 Recherche par nom", "🧭 Recherche par critères (France)"])
 
-if st.button("Analyser l'entreprise", type="primary"):
-    if not company_name:
-        st.warning("Entre un nom d'entreprise.")
-    else:
-        with st.spinner("Récupération des données publiques..."):
-            if country == "France":
-                company = search_company_france(company_name)
-                news = search_news(company_name, country="FR")
-            else:
-                company = search_company_portugal(company_name, api_key=nif_pt_key or None)
-                news = search_news(company_name, country="PT")
+with tab_nom:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        company_name = st.text_input("Nom de l'entreprise à prospecter")
+    with col2:
+        country = st.selectbox("Pays", ["France", "Portugal"])
 
-        if not company:
-            st.error("Aucune entreprise trouvée avec ce nom. Essaie le nom légal complet.")
-            st.session_state.pop("company", None)
-        elif company.get("erreur"):
-            st.error(f"Erreur lors de la récupération des données : {company['erreur']}")
+    if st.button("Analyser l'entreprise", type="primary", key="btn_nom"):
+        if not company_name:
+            st.warning("Entre un nom d'entreprise.")
         else:
-            st.session_state["company"] = company
-            st.session_state["news"] = news
-            st.session_state["company_name"] = company_name
+            with st.spinner("Récupération des données publiques..."):
+                if country == "France":
+                    company = search_company_france(company_name)
+                    news = search_news(company_name, country="FR")
+                else:
+                    company = search_company_portugal(company_name, api_key=nif_pt_key or None)
+                    news = search_news(company_name, country="PT")
+
+            if not company:
+                st.error("Aucune entreprise trouvée avec ce nom. Essaie le nom légal complet.")
+                st.session_state.pop("company", None)
+            elif company.get("erreur"):
+                st.error(f"Erreur lors de la récupération des données : {company['erreur']}")
+            else:
+                st.session_state["company"] = company
+                st.session_state["news"] = news
+                st.session_state["company_name"] = company.get("nom") or company_name
+
+with tab_criteres:
+    st.caption(
+        "Basé sur les données ouvertes françaises (recherche-entreprises.api.gouv.fr). "
+        "Le Portugal n'a pas d'équivalent gratuit filtrable à ce jour - voir le README."
+    )
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        sector_label = st.selectbox("Secteur d'activité", ["(Tous)"] + list(NAF_SECTIONS.values()))
+        region_label = st.selectbox("Région", ["(Toutes)"] + list(REGIONS_FR.values()))
+    with fc2:
+        naf_precis = st.text_input("Code NAF précis (optionnel, prioritaire sur le secteur)", placeholder="ex : 62.01Z")
+        departement = st.text_input("Département (optionnel)", placeholder="ex : 75 ou 75,92,93")
+    fc3, fc4 = st.columns(2)
+    with fc3:
+        effectif_min = st.number_input("Effectif minimum", min_value=0, value=0, step=10)
+    with fc4:
+        effectif_max = st.number_input("Effectif maximum (0 = pas de plafond)", min_value=0, value=0, step=10)
+    keyword = st.text_input("Mot-clé dans le nom (optionnel)", placeholder="ex : conseil")
+
+    if st.button("Rechercher les entreprises correspondantes", type="primary", key="btn_criteres"):
+        sector_code = None
+        for code, label in NAF_SECTIONS.items():
+            if label == sector_label:
+                sector_code = code
+        region_code = None
+        for code, label in REGIONS_FR.items():
+            if label == region_label:
+                region_code = code
+
+        with st.spinner("Recherche en cours..."):
+            resultats = search_companies_by_criteria(
+                sector=sector_code,
+                naf_code=naf_precis or None,
+                region=region_code,
+                departement=departement or None,
+                keyword=keyword or None,
+                effectif_min=effectif_min or None,
+                effectif_max=effectif_max or None,
+                max_results=25,
+            )
+
+        if resultats and resultats[0].get("erreur"):
+            st.error(f"Erreur : {resultats[0]['erreur']}")
+            st.session_state.pop("funnel_results", None)
+        elif not resultats:
+            st.warning("Aucune entreprise ne correspond à ces critères - essaie d'élargir la recherche.")
+            st.session_state.pop("funnel_results", None)
+        else:
+            st.session_state["funnel_results"] = resultats
+
+    if st.session_state.get("funnel_results"):
+        resultats = st.session_state["funnel_results"]
+        st.success(f"{len(resultats)} entreprise(s) trouvée(s) (limité à 25 par recherche).")
+        st.dataframe(
+            [
+                {
+                    "Nom": e.get("nom"),
+                    "Ville": e.get("ville") or "—",
+                    "Effectif": e.get("effectif_libelle"),
+                    "Catégorie": e.get("categorie_entreprise") or "—",
+                }
+                for e in resultats
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        noms = [e.get("nom") for e in resultats]
+        choix = st.selectbox("Choisir une entreprise à analyser en détail", noms, key="choix_funnel")
+        if st.button("Analyser cette entreprise", key="btn_analyser_funnel"):
+            entreprise_choisie = next(e for e in resultats if e.get("nom") == choix)
+            st.session_state["company"] = entreprise_choisie
+            st.session_state["company_name"] = entreprise_choisie.get("nom")
+            with st.spinner("Récupération des actualités..."):
+                st.session_state["news"] = search_news(entreprise_choisie.get("nom"), country="FR")
 
 # --- Affichage des résultats -------------------------------------------------
 if "company" in st.session_state:

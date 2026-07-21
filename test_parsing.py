@@ -87,10 +87,80 @@ def test_news_url_construction():
     print("OK  search_news: URL Google News RSS bien construite ->", called_url)
 
 
+MULTI_RESULT_RESPONSE = {
+    "results": [
+        {
+            "siren": "111111111", "nom_complet": "PETITE BOITE TECH", "categorie_entreprise": "PME",
+            "section_activite_principale": "J", "tranche_effectif_salarie": "12",  # 20-49
+            "siege": {"libelle_commune": "Lyon"}, "dirigeants": [], "finances": {},
+        },
+        {
+            "siren": "222222222", "nom_complet": "GROS GROUPE TECH", "categorie_entreprise": "GE",
+            "section_activite_principale": "J", "tranche_effectif_salarie": "53",  # 10000+
+            "siege": {"libelle_commune": "Paris"}, "dirigeants": [], "finances": {},
+        },
+        {
+            "siren": "333333333", "nom_complet": "BOITE SANS EFFECTIF CONNU", "categorie_entreprise": "PME",
+            "section_activite_principale": "J", "tranche_effectif_salarie": "NN",
+            "siege": {"libelle_commune": "Marseille"}, "dirigeants": [], "finances": {},
+        },
+    ]
+}
+
+
+def test_search_companies_by_criteria_params():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"results": []}
+    mock_resp.raise_for_status.return_value = None
+    with patch("data_sources.requests.get", return_value=mock_resp) as mock_get:
+        ds.search_companies_by_criteria(sector="J", region="84", departement="69", keyword="conseil")
+    params = mock_get.call_args.kwargs["params"]
+    assert params["section_activite_principale"] == "J"
+    assert params["region"] == "84"
+    assert params["departement"] == "69"
+    assert params["q"] == "conseil"
+    assert params["etat_administratif"] == "A"
+    print("OK  search_companies_by_criteria: paramètres envoyés à l'API corrects ->", params)
+
+
+def test_search_companies_by_criteria_naf_precis_prioritaire():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"results": []}
+    mock_resp.raise_for_status.return_value = None
+    with patch("data_sources.requests.get", return_value=mock_resp) as mock_get:
+        ds.search_companies_by_criteria(sector="J", naf_code="62.01Z")
+    params = mock_get.call_args.kwargs["params"]
+    assert params["code_naf"] == "62.01Z"
+    assert "section_activite_principale" not in params
+    print("OK  search_companies_by_criteria: code NAF précis prioritaire sur le secteur")
+
+
+def test_search_companies_by_criteria_filtre_effectif_client():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = MULTI_RESULT_RESPONSE
+    mock_resp.raise_for_status.return_value = None
+    with patch("data_sources.requests.get", return_value=mock_resp):
+        # Sans filtre effectif : les 3 remontent
+        tous = ds.search_companies_by_criteria(sector="J")
+        assert len(tous) == 3
+        # Avec un plancher de 100 : seule GROS GROUPE TECH (10000+) doit rester
+        gros_seulement = ds.search_companies_by_criteria(sector="J", effectif_min=100)
+        noms = [e["nom"] for e in gros_seulement]
+        assert noms == ["GROS GROUPE TECH"]
+        # Avec un plafond de 50 : seule PETITE BOITE TECH (20-49) doit rester
+        petites_seulement = ds.search_companies_by_criteria(sector="J", effectif_max=50)
+        noms2 = [e["nom"] for e in petites_seulement]
+        assert noms2 == ["PETITE BOITE TECH"]
+    print("OK  search_companies_by_criteria: filtre effectif min/max appliqué côté client")
+
+
 if __name__ == "__main__":
     test_search_company_france()
     test_search_company_france_no_result()
     test_suggest_contact_leads()
     test_search_company_portugal_no_key()
     test_news_url_construction()
+    test_search_companies_by_criteria_params()
+    test_search_companies_by_criteria_naf_precis_prioritaire()
+    test_search_companies_by_criteria_filtre_effectif_client()
     print("\nTous les tests sont passés.")

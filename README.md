@@ -57,6 +57,17 @@ de l'API française, sans appel réseau) :
 python test_parsing.py
 ```
 
+## Deux modes de recherche
+
+- **Par nom** : comme avant, fiche complète d'une entreprise précise (FR ou PT).
+- **Par critères (France uniquement)** : un onglet "entonnoir" pour lister les
+  entreprises correspondant à un secteur (NAF), une région/département, une
+  taille d'effectif et/ou un mot-clé, puis choisir laquelle analyser en détail
+  dans la liste de résultats. Basé sur les mêmes données ouvertes
+  (recherche-entreprises.api.gouv.fr) - le Portugal n'a pas d'équivalent
+  gratuit et filtrable à ce jour ; nif.pt ne fait que de la recherche par
+  nom/NIF unitaire.
+
 ## Utilisation
 
 1. Renseigne ton offre et le poste visé dans la barre latérale (utilisés
